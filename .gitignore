@@ -1,0 +1,23 @@
+/build-eclipse/
+/build/
+/dist/
+/tmp/
+META-INF/MANIFEST.MF
+plugin.properties
+plugin.xml
+*~
+*.backup
+/*.log
+.DS_Store
+/.gradle
+/docs
+/build-eclipse/
+/javadoc
+**/.gradle
+/src-gen
+/test-gen
+
+# IntelliJ
+.idea/
+*.iml
+*.iws
