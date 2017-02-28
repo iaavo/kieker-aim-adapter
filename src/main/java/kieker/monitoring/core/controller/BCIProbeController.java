@@ -38,9 +38,19 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.regex.Pattern;
 
 import org.aim.api.exceptions.InstrumentationException;
 import org.aim.api.instrumentation.AbstractEnclosingProbe;
+import org.aim.mainagent.service.GetStateServlet;
+import org.aim.mainagent.service.InstrumentServlet;
+import org.aim.mainagent.service.Service;
+import org.aim.mainagent.service.TestConnectionServlet;
+import org.aim.mainagent.service.UninstrumentServlet;
+import org.glassfish.grizzly.http.server.HttpHandler;
+import org.glassfish.grizzly.http.server.HttpServer;
+import org.glassfish.grizzly.http.server.Request;
+import org.glassfish.grizzly.http.server.Response;
 
 import kieker.common.configuration.Configuration;
 import kieker.common.logging.Log;
@@ -48,7 +58,6 @@ import kieker.common.logging.LogFactory;
 import kieker.monitoring.core.configuration.ConfigurationFactory;
 import kieker.monitoring.core.configuration.KeysBCI;
 import kieker.monitoring.core.signaturePattern.InvalidPatternException;
-import kieker.monitoring.core.signaturePattern.KiekerPattern;
 import kieker.monitoring.core.signaturePattern.PatternEntry;
 import kieker.monitoring.core.signaturePattern.PatternParser;
 import kieker.monitoring.probe.aim.AimOperationExecutionProbe;
@@ -58,20 +67,20 @@ import kieker.monitoring.probe.aim.AimOperationExecutionProbe;
  *
  * @since 1.6
  */
-public class BCIProbeController extends AbstractController implements IProbeController {
-	static final Log LOG = LogFactory.getLog(BCIProbeController.class); // NOPMD package for inner class
+public class BCIProbeController implements IProbeController {
+	static final Log LOG = LogFactory.getLog(BCIProbeController.class); // NOPMD
+																		// package
+																		// for
+																		// inner
+																		// class
 	private static final String ENCODING = "UTF-8";
 
-	private final boolean enabled;
-	private final String configFilePathname;
-	private final boolean configFileUpdate;
-	private final int configFileReadIntervall;
-	private final ConfigFileReader configFileReader;
-	private final boolean bciEnabled;
 	final Class<? extends AbstractEnclosingProbe> bciProbe;
 
 	private final ConcurrentMap<String, Boolean> signatureCache = new ConcurrentHashMap<String, Boolean>();
-	final List<PatternEntry> patternList = new ArrayList<PatternEntry>(); // only accessed synchronized
+	final List<PatternEntry> patternList = new ArrayList<PatternEntry>(); // only
+																			// accessed
+																			// synchronized
 
 	final KiekerInstrumentor instrumentor = new KiekerInstrumentor();
 
@@ -81,7 +90,8 @@ public class BCIProbeController extends AbstractController implements IProbeCont
 	private final ClassLoadingListener classLoaderListener = new ClassLoadingListener() {
 		public void onLoadClass(final Class<?> clazz) {
 			try {
-				BCIProbeController.this.instrumentor.reinstrument(clazz, BCIProbeController.this.patternList, BCIProbeController.this.bciProbe);
+				BCIProbeController.this.instrumentor.reinstrument(clazz, BCIProbeController.this.patternList,
+						BCIProbeController.this.bciProbe);
 			} catch (final InstrumentationException e) {
 				LOG.error("Class '" + clazz.getName() + "' has not been instrumented correctly.", e);
 			}
@@ -89,40 +99,16 @@ public class BCIProbeController extends AbstractController implements IProbeCont
 	};
 
 	/**
-	 * Creates a new instance of this class using the given configuration to initialize the class.
+	 * Creates a new instance of this class using the given configuration to
+	 * initialize the class.
 	 *
 	 * @param configuration
 	 *            The configuration used to initialize this controller.
 	 */
 	protected BCIProbeController(final Configuration configuration) {
-		super(configuration);
-
-		this.enabled = configuration.getBooleanProperty(ConfigurationFactory.ADAPTIVE_MONITORING_ENABLED);
-		if (this.enabled) {
-			this.configFilePathname = configuration.getPathProperty(ConfigurationFactory.ADAPTIVE_MONITORING_CONFIG_FILE);
-			this.configFileUpdate = configuration.getBooleanProperty(ConfigurationFactory.ADAPTIVE_MONITORING_CONFIG_FILE_UPDATE);
-			this.configFileReadIntervall = configuration.getIntProperty(ConfigurationFactory.ADAPTIVE_MONITORING_CONFIG_FILE_READ_INTERVALL);
-			this.configFileReader = new ConfigFileReader(this.configFilePathname);
-			// run once to get the initial file contents
-			this.configFileReader.readFile(true);
-
-			this.bciEnabled = configuration.getBooleanProperty(KeysBCI.ADAPTIVE_MONITORING_BCI_ENABLED);
-			if (this.bciEnabled) {
-				this.bciProbe = this.getProbeFromString(configuration.getStringProperty(KeysBCI.ADAPTIVE_MONITORING_BCI_PROBE),
-						AimOperationExecutionProbe.class);
-				this.addClassLoaderListener();
-			} else {
-				this.bciProbe = null;
-			}
-
-		} else {
-			this.configFilePathname = null; // NOPMD (null)
-			this.configFileUpdate = false;
-			this.configFileReadIntervall = 0;
-			this.configFileReader = null; // NOPMD (null)
-			this.bciProbe = null;
-			this.bciEnabled = false;
-		}
+		this.bciProbe = this.getProbeFromString(configuration.getStringProperty(KeysBCI.ADAPTIVE_MONITORING_BCI_PROBE),
+				AimOperationExecutionProbe.class);
+		this.addClassLoaderListener();
 	}
 
 	private void addClassLoaderListener() {
@@ -133,7 +119,8 @@ public class BCIProbeController extends AbstractController implements IProbeCont
 	}
 
 	@SuppressWarnings("unchecked")
-	private Class<? extends AbstractEnclosingProbe> getProbeFromString(final String className, final Class<? extends AbstractEnclosingProbe> defaultClass) {
+	private Class<? extends AbstractEnclosingProbe> getProbeFromString(final String className,
+			final Class<? extends AbstractEnclosingProbe> defaultClass) {
 		try {
 			final Class<?> configClass = Class.forName(className);
 			if (AbstractEnclosingProbe.class.isAssignableFrom(configClass)) {
@@ -145,58 +132,15 @@ public class BCIProbeController extends AbstractController implements IProbeCont
 		return defaultClass;
 	}
 
-	@Override
-	protected void init() {
-		if (this.enabled) {
-			final ScheduledThreadPoolExecutor scheduler = this.monitoringController.getPeriodicSensorsPoolExecutor();
-			if ((this.configFileReadIntervall > 0) && (null != scheduler)) {
-				scheduler.scheduleWithFixedDelay(this.configFileReader,
-						this.configFileReadIntervall, this.configFileReadIntervall, TimeUnit.SECONDS);
-			} else {
-				if ((this.configFileReadIntervall > 0) && (null == scheduler)) {
-					LOG.warn("Failed to enable regular reading of adaptive monitoring config file. '" + ConfigurationFactory.PERIODIC_SENSORS_EXECUTOR_POOL_SIZE
-							+ "' must be > 0!");
-				}
-			}
-		}
-	}
-
-	@Override
 	protected void cleanup() {
 		if (LOG.isDebugEnabled()) {
 			LOG.debug("Shutting down Probe Controller");
 		}
 	}
 
-	@Override
-	public String toString() {
-		final StringBuilder sb = new StringBuilder(255);
-		sb.append("ProbeController: ");
-		if (this.enabled) {
-			sb.append('\'');
-			sb.append(this.configFilePathname);
-			sb.append("'\n\tTime intervall for update checks of pattern file (in seconds): ");
-			if (this.configFileReadIntervall > 0) {
-				sb.append(this.configFileReadIntervall);
-			} else {
-				sb.append("deactivated");
-			}
-			sb.append("\n\tUpdate pattern file with additional patterns: ");
-			sb.append(this.configFileUpdate);
-		} else {
-			sb.append("disabled");
-		}
-		sb.append('\n');
-		return sb.toString();
-	}
-
 	private boolean addProbe(final String strPattern, final boolean activated) {
-		if (!this.enabled) {
-			LOG.warn("Adapative Monitoring is disabled!");
-			return false;
-		}
 		synchronized (this) {
-			final KiekerPattern pattern;
+			final Pattern pattern;
 			try {
 				pattern = PatternParser.parseToPattern(strPattern);
 			} catch (final InvalidPatternException ex) {
@@ -206,9 +150,7 @@ public class BCIProbeController extends AbstractController implements IProbeCont
 			final PatternEntry patternEntry = new PatternEntry(strPattern, pattern, activated);
 			this.addPattern(patternEntry);
 
-			if (this.bciEnabled) {
-				this.reinstrument();
-			}
+			this.reinstrument();
 		}
 		return true;
 	}
@@ -240,15 +182,11 @@ public class BCIProbeController extends AbstractController implements IProbeCont
 	 * {@inheritDoc}
 	 */
 	public boolean isProbeActivated(final String signature) {
-		if (this.enabled) {
-			final Boolean active = this.signatureCache.get(signature);
-			if (null == active) {
-				return this.matchesPattern(signature);
-			} else {
-				return active;
-			}
+		final Boolean active = this.signatureCache.get(signature);
+		if (null == active) {
+			return this.matchesPattern(signature);
 		} else {
-			return true;
+			return active;
 		}
 	}
 
@@ -262,11 +200,6 @@ public class BCIProbeController extends AbstractController implements IProbeCont
 	 *            Whether the pattern file should be updated or not.
 	 */
 	protected void setProbePatternList(final List<String> strPatternList, final boolean updateConfig) {
-		if (!this.enabled) {
-			LOG.warn("Adapative Monitoring is disabled!");
-			return;
-		}
-
 		synchronized (this) {
 			this.patternList.clear();
 			this.signatureCache.clear();
@@ -292,17 +225,12 @@ public class BCIProbeController extends AbstractController implements IProbeCont
 					}
 				}
 			}
-			if (this.bciEnabled) {
-				try {
-					this.instrumentor.undoInstrumentation();
-					this.reinstrument();
-				} catch (final InstrumentationException e) {
-					// TODO Auto-generated catch block
-					e.printStackTrace();
-				}
-			}
-			if (updateConfig && this.configFileUpdate) {
-				this.updatePatternFile();
+			try {
+				this.instrumentor.undoInstrumentation();
+				this.reinstrument();
+			} catch (final InstrumentationException e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
 			}
 		}
 
@@ -319,10 +247,6 @@ public class BCIProbeController extends AbstractController implements IProbeCont
 	 * {@inheritDoc}
 	 */
 	public List<String> getProbePatternList() {
-		if (!this.enabled) {
-			LOG.warn("Adapative Monitoring is disabled!");
-			return new ArrayList<String>(0);
-		}
 		synchronized (this) {
 			final List<String> list = new ArrayList<String>(this.patternList.size());
 			for (final PatternEntry entry : this.patternList) {
@@ -339,14 +263,16 @@ public class BCIProbeController extends AbstractController implements IProbeCont
 	}
 
 	/**
-	 * This method tests if the given signature matches a pattern and completes accordingly the signatureCache map.
+	 * This method tests if the given signature matches a pattern and completes
+	 * accordingly the signatureCache map.
 	 *
 	 * @param signature
 	 *            The signature to match.
 	 */
 	private boolean matchesPattern(final String signature) {
 		synchronized (this) {
-			final ListIterator<PatternEntry> patternListIterator = this.patternList.listIterator(this.patternList.size());
+			final ListIterator<PatternEntry> patternListIterator = this.patternList
+					.listIterator(this.patternList.size());
 			while (patternListIterator.hasPrevious()) {
 				final PatternEntry patternEntry = patternListIterator.previous();
 				if (patternEntry.getPattern().matcher(signature).matches()) {
@@ -366,127 +292,9 @@ public class BCIProbeController extends AbstractController implements IProbeCont
 		// we must always clear the cache!
 		this.signatureCache.clear();
 		this.patternList.add(patternEntry);
-		if (this.configFileUpdate) {
-			this.updatePatternFile();
-		}
-	}
-
-	private void updatePatternFile() { // only called within synchronized
-		PrintWriter pw = null;
-		try {
-			pw = new PrintWriter(new BufferedWriter(new OutputStreamWriter(new FileOutputStream(this.configFilePathname, false), ENCODING)));
-			pw.print("## Adaptive Monitoring Config File: ");
-			pw.println(this.configFilePathname);
-			pw.print("## written on: ");
-			final DateFormat date = new SimpleDateFormat("yyyyMMdd'-'HHmmssSSS", Locale.US);
-			date.setTimeZone(TimeZone.getTimeZone("UTC"));
-			pw.println(date.format(new java.util.Date()));
-			pw.println('#');
-			final List<String> strPatternList = this.getProbePatternList();
-			for (final String string : strPatternList) {
-				pw.println(string);
-			}
-		} catch (final IOException ex) {
-			LOG.error("Updating Adaptive Monitoring config file failed.", ex);
-		} finally {
-			if (pw != null) {
-				pw.close();
-			}
-		}
-		this.configFileReader.lastModifiedTimestamp = System.currentTimeMillis();
-		LOG.info("Updating Adaptive Monitoring config file succeeded.");
-	}
-
-	/**
-	 * @author Jan Waller
-	 */
-	private final class ConfigFileReader implements Runnable {
-		private final String configFilePathname;
-		volatile long lastModifiedTimestamp; // NOPMD NOCS (package)
-
-		public ConfigFileReader(final String configFilePathname) {
-			this.configFilePathname = configFilePathname;
-		}
-
-		private List<String> readConfigFile(final BufferedReader reader) throws IOException {
-			final List<String> strPatternList = new LinkedList<String>();
-			String line;
-			while ((line = reader.readLine()) != null) { // NOPMD (assign)
-				strPatternList.add(line);
-			}
-			return strPatternList;
-		}
-
-		public void readFile(final boolean fallbackToResource) {
-			BufferedReader reader = null;
-			final long lastModified;
-			final File file = new File(this.configFilePathname);
-			try {
-				if (file.canRead() && ((lastModified = file.lastModified()) > 0L)) { // NOPMD NOCS
-					if (lastModified > this.lastModifiedTimestamp) {
-						this.lastModifiedTimestamp = lastModified;
-						reader = new BufferedReader(new InputStreamReader(new FileInputStream(file), ENCODING));
-						try {
-							BCIProbeController.this.setProbePatternList(this.readConfigFile(reader), false);
-							return;
-						} catch (final IOException ex) {
-							LOG.warn("Error reading adaptive monitoring config file: " + this.configFilePathname, ex);
-						}
-					} else {
-						return; // nothing do this time
-					}
-				}
-			} catch (final SecurityException ex) { // NOPMD NOCS
-				// file not found or not readable
-			} catch (final IOException ex) { // NOPMD NOCS
-				// file not found or not readable
-			} finally {
-				if (reader != null) {
-					try {
-						reader.close();
-					} catch (final IOException ex) {
-						LOG.error("Failed to close file: " + this.configFilePathname, ex);
-					}
-				}
-			}
-			if (fallbackToResource) {
-				try {
-					final URL configFileAsResource = MonitoringController.class.getClassLoader().getResource(this.configFilePathname);
-					if (null != configFileAsResource) {
-						reader = new BufferedReader(new InputStreamReader(configFileAsResource.openStream(), ENCODING));
-						try {
-							BCIProbeController.this.setProbePatternList(this.readConfigFile(reader), true);
-							return;
-						} catch (final IOException ex) {
-							LOG.warn("Error reading adaptive monitoring config file: " + this.configFilePathname, ex);
-						}
-					}
-				} catch (final SecurityException ex) { // NOPMD NOCS
-					// file not found or not readable
-				} catch (final IOException ex) { // NOPMD NOCS
-					// file not found or not readable
-				} finally {
-					if (reader != null) {
-						try {
-							reader.close();
-						} catch (final IOException ex) {
-							LOG.error("Failed to close file: " + this.configFilePathname, ex);
-						}
-					}
-				}
-				LOG.warn("Adaptive monitoring config file not found: " + this.configFilePathname);
-			}
-		}
-
-		public void run() {
-			this.readFile(false);
-		}
 	}
 
 	public void enableMonitoring() {
-		if (!this.bciEnabled) {
-			return;
-		}
 		try {
 			this.instrumentor.reinstrument(this.patternList, this.bciProbe);
 		} catch (final InstrumentationException e) {
@@ -496,9 +304,6 @@ public class BCIProbeController extends AbstractController implements IProbeCont
 	}
 
 	public void disableMonitoring() {
-		if (!this.bciEnabled) {
-			return;
-		}
 		try {
 			this.instrumentor.undoInstrumentation();
 		} catch (final InstrumentationException e) {
