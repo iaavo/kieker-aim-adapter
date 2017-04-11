@@ -1,5 +1,6 @@
 package kieker.monitoring.core.controller;
 
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.util.ArrayList;
@@ -8,40 +9,43 @@ import java.util.List;
 import java.util.ListIterator;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Pattern;
 
-import org.aim.api.exceptions.InstrumentationException;
+import org.aim.aiminterface.description.restriction.Restriction;
+import org.aim.aiminterface.exceptions.InstrumentationException;
 import org.aim.api.instrumentation.AbstractEnclosingProbe;
 import org.aim.api.instrumentation.description.internal.FlatInstrumentationEntity;
 import org.aim.api.instrumentation.description.internal.InstrumentationSet;
-import org.aim.description.restrictions.Restriction;
-import org.aim.mainagent.instrumentor.BCInjector;
-import org.aim.mainagent.instrumentor.JAgentSwapper;
-import org.aim.mainagent.instrumentor.JInstrumentation;
+import org.aim.mainagent.instrumentation.BCInjector;
+import org.aim.mainagent.instrumentation.JAgentSwapper;
+import org.aim.mainagent.instrumentation.JInstrumentation;
 
 import kieker.common.logging.Log;
 import kieker.common.logging.LogFactory;
 import kieker.monitoring.core.signaturePattern.InvalidPatternException;
 import kieker.monitoring.core.signaturePattern.PatternEntry;
+import kieker.monitoring.core.signaturePattern.PatternParser;
 import kieker.monitoring.core.signaturePattern.SignatureFactory;
 
 public class KiekerInstrumentor {
 	private static final Log LOG = LogFactory.getLog(KiekerInstrumentor.class);
 	private final Set<FlatInstrumentationEntity> currentInstrumentationState = new HashSet<FlatInstrumentationEntity>();
 
-	public void reinstrument(final Class<?> clazz, final List<PatternEntry> patternList, final Class<? extends AbstractEnclosingProbe> bciProbe)
-			throws InstrumentationException {
+	public void reinstrument(final Class<?> clazz, final List<PatternEntry> patternList,
+			final Class<? extends AbstractEnclosingProbe> bciProbe) throws InstrumentationException {
 		// Invoked by KiekerClassLoader
 		this.reinstrument(new Class<?>[] { clazz }, patternList, bciProbe);
 	}
 
-	public void reinstrument(final List<PatternEntry> patternList, final Class<? extends AbstractEnclosingProbe> bciProbe) throws InstrumentationException {
+	public void reinstrument(final List<PatternEntry> patternList,
+			final Class<? extends AbstractEnclosingProbe> bciProbe) throws InstrumentationException {
 		// Invoked by activating probe
 		final Class<?>[] classes = JInstrumentation.getInstance().getjInstrumentation().getAllLoadedClasses();
 		this.reinstrument(classes, patternList, bciProbe);
 	}
 
-	private void reinstrument(final Class<?>[] classes, final List<PatternEntry> patternList, final Class<? extends AbstractEnclosingProbe> bciProbe)
-			throws InstrumentationException {
+	private void reinstrument(final Class<?>[] classes, final List<PatternEntry> patternList,
+			final Class<? extends AbstractEnclosingProbe> bciProbe) throws InstrumentationException {
 
 		final Set<FlatInstrumentationEntity> newInstrumentationStatements = new HashSet<FlatInstrumentationEntity>();
 
@@ -85,23 +89,22 @@ public class KiekerInstrumentor {
 		patterns = this.retainPatterns(clazz.getName(), patterns);
 		if (!patterns.isEmpty()) {
 			final Set<FlatInstrumentationEntity> newInstrumentationStatements = new HashSet<FlatInstrumentationEntity>();
-			outer:
-				for (final Method method : clazz.getMethods()) {
-					final String signature = this.getSignature(method);
-					final ListIterator<PatternEntry> patternListIterator = patterns.listIterator(patterns.size());
-					while (patternListIterator.hasPrevious()) {
-						final PatternEntry patternEntry = patternListIterator.previous();
-						if (patternEntry.getPattern().matcher(signature).matches()) {
-							if (patternEntry.isActivated()) {
-								final FlatInstrumentationEntity e = new FlatInstrumentationEntity(clazz, signature, bciProbe);
-								e.setScopeId(-1l);
-								newInstrumentationStatements.add(e);
-							} else {
-								continue outer;
-							}
+			outer: for (final Method method : clazz.getMethods()) {
+				final String signature = this.getSignature(method);
+				final ListIterator<PatternEntry> patternListIterator = patterns.listIterator(patterns.size());
+				while (patternListIterator.hasPrevious()) {
+					final PatternEntry patternEntry = patternListIterator.previous();
+					if (patternEntry.getPattern().matcher(signature).matches()) {
+						if (patternEntry.isActivated()) {
+							final FlatInstrumentationEntity e = new FlatInstrumentationEntity(clazz, signature, 0l,
+									bciProbe);
+							newInstrumentationStatements.add(e);
+						} else {
+							continue outer;
 						}
 					}
 				}
+			}
 			return newInstrumentationStatements;
 		}
 		return null;
@@ -119,11 +122,9 @@ public class KiekerInstrumentor {
 			exceptions[i] = bla[i].getName();
 		}
 		try {
-			return SignatureFactory.createMethodSignature(new String[] { Modifier.toString(method.getModifiers()) }, method.getReturnType()
-					.getName(),
-					method.getDeclaringClass().getName(),
-					method.getName(), params,
-					exceptions);
+			return SignatureFactory.createMethodSignature(new String[] { Modifier.toString(method.getModifiers()) },
+					method.getReturnType().getName(), method.getDeclaringClass().getName(), method.getName(),
+					params.length == 0 ? null : params, exceptions.length == 0 ? null : exceptions);
 		} catch (final InvalidPatternException e) {
 			// Should not happen
 			e.printStackTrace();
@@ -131,18 +132,20 @@ public class KiekerInstrumentor {
 		return null;
 	}
 
-	private void injectNewInstrumentation(final InstrumentationSet newInstrumentationSet) throws InstrumentationException {
-		final Map<Class<?>, byte[]> classesToRevert = BCInjector.getInstance().injectInstrumentationProbes(
-				newInstrumentationSet, new Restriction());
+	private void injectNewInstrumentation(final InstrumentationSet newInstrumentationSet)
+			throws InstrumentationException {
+		final Map<Class<?>, byte[]> classesToRevert = BCInjector.getInstance()
+				.injectInstrumentationProbes(newInstrumentationSet, Restriction.EMPTY_RESTRICTION);
 		JAgentSwapper.getInstance().redefineClasses(classesToRevert);
 	}
 
-	private Set<Class<?>> revertOverlappingInstrumentation(final Set<FlatInstrumentationEntity> newInstrumentationStatements)
-			throws InstrumentationException {
+	private Set<Class<?>> revertOverlappingInstrumentation(
+			final Set<FlatInstrumentationEntity> newInstrumentationStatements) throws InstrumentationException {
 		final Set<Class<?>> intersection = new InstrumentationSet(newInstrumentationStatements).classesToInstrument();
 
 		intersection.retainAll(new InstrumentationSet(this.getCurrentInstrumentationState()).classesToInstrument());
-		final Map<Class<?>, byte[]> classesToRevert = BCInjector.getInstance().partlyRevertInstrumentation(intersection);
+		final Map<Class<?>, byte[]> classesToRevert = BCInjector.getInstance()
+				.partlyRevertInstrumentation(intersection);
 		JAgentSwapper.getInstance().redefineClasses(classesToRevert);
 		return intersection;
 	}
@@ -152,7 +155,7 @@ public class KiekerInstrumentor {
 		JAgentSwapper.getInstance().redefineClasses(classesToRevert);
 		this.getCurrentInstrumentationState().clear();
 	}
-	
+
 	/**
 	 * @return the currentInstrumentationState
 	 */
@@ -165,11 +168,35 @@ public class KiekerInstrumentor {
 		final ListIterator<PatternEntry> patternListIterator = patternList.listIterator(patternList.size());
 		while (patternListIterator.hasPrevious()) {
 			final PatternEntry patternEntry = patternListIterator.previous();
-			if (patternEntry.getPattern().matcher(className).matches()) {
+			final String fqClassName = extractClassNameFromPattern(patternEntry.getStrPattern());
+			final Pattern fqClassPattern = parseToFqClassNamePattern(fqClassName);
+			if (fqClassPattern.matcher(className).matches()) {
 				matchingPatterns.add(0, patternEntry);
 			}
 		}
 		return matchingPatterns;
+	}
+
+	private String extractClassNameFromPattern(String pattern) {
+		int lastDotIndex = pattern.lastIndexOf('.');
+		pattern = pattern.substring(0, lastDotIndex);
+		int lastSpaceIndex = pattern.lastIndexOf(' ');
+
+		pattern = pattern.substring(lastSpaceIndex + 1, pattern.length());
+		return pattern;
+	}
+
+	private Pattern parseToFqClassNamePattern(String pattern) {
+		try {
+			// TODO possibility to call the method without reflection
+			Method method = PatternParser.class.getDeclaredMethod("parseFQType", String.class);
+			method.setAccessible(true);
+			String patternStr = (String) method.invoke(null, pattern);
+			return Pattern.compile(patternStr);
+		} catch (IllegalAccessException | IllegalArgumentException | InvocationTargetException | NoSuchMethodException | SecurityException e) {
+			e.printStackTrace();
+		}
+		return null;
 	}
 
 }

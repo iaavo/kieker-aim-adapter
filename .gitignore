@@ -1,5 +1,7 @@
 /build-eclipse/
 /build/
+/bin/
+/jar/
 /dist/
 /tmp/
 META-INF/MANIFEST.MF

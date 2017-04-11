@@ -9,8 +9,6 @@ import java.util.HashSet;
 import java.util.Set;
 
 public class KiekerClassLoader extends ClassLoader {
-	// private static final Log LOG = LogFactory.getLog(KiekerClassLoader.class);
-
 	public static Set<Class<?>> loadedClasses = Collections.synchronizedSet(new HashSet<Class<?>>());
 
 	private ClassLoadingListener listener;

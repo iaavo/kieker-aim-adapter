@@ -9,14 +9,11 @@ import org.aim.api.instrumentation.ProbeBeforePart;
 import org.aim.api.instrumentation.ProbeVariable;
 import org.lpe.common.extension.IExtension;
 
-import kieker.common.logging.Log;
-import kieker.common.logging.LogFactory;
 import kieker.common.record.controlflow.OperationExecutionRecord;
 import kieker.monitoring.core.controller.IMonitoringController;
 import kieker.monitoring.core.controller.MonitoringController;
 import kieker.monitoring.core.registry.ControlFlowRegistry;
 import kieker.monitoring.core.registry.SessionRegistry;
-import kieker.monitoring.probe.aspectj.operationExecution.AbstractOperationExecutionAspect;
 
 public class AimOperationExecutionProbe extends AbstractEnclosingProbe {
 
@@ -31,9 +28,7 @@ public class AimOperationExecutionProbe extends AbstractEnclosingProbe {
 	@ProbeVariable
 	public int _KiekerResponsetimeProbe_ess;
 
-	// private static final SessionRegistry SESSIONREGISTRY = SessionRegistry.INSTANCE;
-
-	public AimOperationExecutionProbe(final IExtension<?> provider) {
+	public AimOperationExecutionProbe(IExtension provider) {
 		super(provider);
 	}
 
@@ -46,8 +41,6 @@ public class AimOperationExecutionProbe extends AbstractEnclosingProbe {
 
 	@ProbeBeforePart()
 	public void beforePart() {
-		final Log log = LogFactory.getLog(AbstractOperationExecutionAspect.class);
-
 		final IMonitoringController ctrl = MonitoringController.getInstance();
 		final ControlFlowRegistry cfRegistry = ControlFlowRegistry.INSTANCE;
 		// collect data
@@ -64,7 +57,7 @@ public class AimOperationExecutionProbe extends AbstractEnclosingProbe {
 			this._KiekerResponsetimeProbe_eoi = cfRegistry.incrementAndRecallThreadLocalEOI(); // ess > 1
 			this._KiekerResponsetimeProbe_ess = cfRegistry.recallAndIncrementThreadLocalESS(); // ess >= 0
 			if ((this._KiekerResponsetimeProbe_eoi == -1) || (this._KiekerResponsetimeProbe_ess == -1)) {
-				log.error("eoi and/or ess have invalid values:" + " eoi == " + this._KiekerResponsetimeProbe_eoi + " ess == " + this._KiekerResponsetimeProbe_ess);
+				System.err.println("eoi and/or ess have invalid values:" + " eoi == " + this._KiekerResponsetimeProbe_eoi + " ess == " + this._KiekerResponsetimeProbe_ess);
 				ctrl.terminateMonitoring();
 			}
 		}

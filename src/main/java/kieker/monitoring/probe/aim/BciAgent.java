@@ -2,7 +2,7 @@ package kieker.monitoring.probe.aim;
 
 import java.lang.instrument.Instrumentation;
 
-import org.aim.mainagent.instrumentor.JInstrumentation;
+import org.aim.mainagent.instrumentation.JInstrumentation;
 
 import kieker.monitoring.core.controller.MonitoringController;
 

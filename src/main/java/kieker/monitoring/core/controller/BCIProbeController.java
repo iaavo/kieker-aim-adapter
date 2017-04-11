@@ -16,77 +16,41 @@
 
 package kieker.monitoring.core.controller;
 
-import java.io.BufferedReader;
-import java.io.BufferedWriter;
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileOutputStream;
-import java.io.IOException;
-import java.io.InputStreamReader;
-import java.io.OutputStreamWriter;
-import java.io.PrintWriter;
-import java.net.URL;
-import java.text.DateFormat;
-import java.text.SimpleDateFormat;
 import java.util.ArrayList;
-import java.util.LinkedList;
 import java.util.List;
 import java.util.ListIterator;
-import java.util.Locale;
-import java.util.TimeZone;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
-import java.util.concurrent.ScheduledThreadPoolExecutor;
-import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
 
-import org.aim.api.exceptions.InstrumentationException;
+import org.aim.aiminterface.exceptions.InstrumentationException;
 import org.aim.api.instrumentation.AbstractEnclosingProbe;
-import org.aim.mainagent.service.GetStateServlet;
-import org.aim.mainagent.service.InstrumentServlet;
-import org.aim.mainagent.service.Service;
-import org.aim.mainagent.service.TestConnectionServlet;
-import org.aim.mainagent.service.UninstrumentServlet;
-import org.glassfish.grizzly.http.server.HttpHandler;
-import org.glassfish.grizzly.http.server.HttpServer;
-import org.glassfish.grizzly.http.server.Request;
-import org.glassfish.grizzly.http.server.Response;
 
-import kieker.common.configuration.Configuration;
 import kieker.common.logging.Log;
 import kieker.common.logging.LogFactory;
-import kieker.monitoring.core.configuration.ConfigurationFactory;
-import kieker.monitoring.core.configuration.KeysBCI;
 import kieker.monitoring.core.signaturePattern.InvalidPatternException;
 import kieker.monitoring.core.signaturePattern.PatternEntry;
 import kieker.monitoring.core.signaturePattern.PatternParser;
 import kieker.monitoring.probe.aim.AimOperationExecutionProbe;
 
-/**
- * @author Jan Waller, Bjoern Weissenfels
- *
- * @since 1.6
- */
 public class BCIProbeController implements IProbeController {
+	public static BCIProbeController instance = new BCIProbeController();
+	
 	static final Log LOG = LogFactory.getLog(BCIProbeController.class); // NOPMD
 																		// package
 																		// for
 																		// inner
 																		// class
-	private static final String ENCODING = "UTF-8";
-
-	final Class<? extends AbstractEnclosingProbe> bciProbe;
+	
+	Class<? extends AbstractEnclosingProbe> bciProbe;
 
 	private final ConcurrentMap<String, Boolean> signatureCache = new ConcurrentHashMap<String, Boolean>();
 	final List<PatternEntry> patternList = new ArrayList<PatternEntry>(); // only
-																			// accessed
-																			// synchronized
+																		  // accessed
+																		  // synchronized
 
 	final KiekerInstrumentor instrumentor = new KiekerInstrumentor();
 
-	/**
-	 *
-	 */
 	private final ClassLoadingListener classLoaderListener = new ClassLoadingListener() {
 		public void onLoadClass(final Class<?> clazz) {
 			try {
@@ -98,16 +62,13 @@ public class BCIProbeController implements IProbeController {
 		}
 	};
 
-	/**
-	 * Creates a new instance of this class using the given configuration to
-	 * initialize the class.
-	 *
-	 * @param configuration
-	 *            The configuration used to initialize this controller.
-	 */
-	protected BCIProbeController(final Configuration configuration) {
-		this.bciProbe = this.getProbeFromString(configuration.getStringProperty(KeysBCI.ADAPTIVE_MONITORING_BCI_PROBE),
-				AimOperationExecutionProbe.class);
+	protected BCIProbeController() {
+		this.bciProbe = AimOperationExecutionProbe.class;
+		this.addClassLoaderListener();
+	}
+
+	protected BCIProbeController(final String bciProbeClassName) {
+		this.bciProbe = this.getProbeFromString(bciProbeClassName, AimOperationExecutionProbe.class);
 		this.addClassLoaderListener();
 	}
 
@@ -164,23 +125,14 @@ public class BCIProbeController implements IProbeController {
 
 	}
 
-	/**
-	 * {@inheritDoc}
-	 */
 	public boolean activateProbe(final String strPattern) {
 		return this.addProbe(strPattern, true);
 	}
 
-	/**
-	 * {@inheritDoc}
-	 */
 	public boolean deactivateProbe(final String strPattern) {
 		return this.addProbe(strPattern, false);
 	}
 
-	/**
-	 * {@inheritDoc}
-	 */
 	public boolean isProbeActivated(final String signature) {
 		final Boolean active = this.signatureCache.get(signature);
 		if (null == active) {
@@ -190,15 +142,6 @@ public class BCIProbeController implements IProbeController {
 		}
 	}
 
-	/**
-	 * Sets the list of probe patterns.
-	 *
-	 * @param strPatternList
-	 *            The new list with pattern strings.
-	 *
-	 * @param updateConfig
-	 *            Whether the pattern file should be updated or not.
-	 */
 	protected void setProbePatternList(final List<String> strPatternList, final boolean updateConfig) {
 		synchronized (this) {
 			this.patternList.clear();
@@ -236,16 +179,10 @@ public class BCIProbeController implements IProbeController {
 
 	}
 
-	/**
-	 * {@inheritDoc}
-	 */
 	public void setProbePatternList(final List<String> strPatternList) {
 		this.setProbePatternList(strPatternList, true);
 	}
 
-	/**
-	 * {@inheritDoc}
-	 */
 	public List<String> getProbePatternList() {
 		synchronized (this) {
 			final List<String> list = new ArrayList<String>(this.patternList.size());
@@ -262,13 +199,6 @@ public class BCIProbeController implements IProbeController {
 		}
 	}
 
-	/**
-	 * This method tests if the given signature matches a pattern and completes
-	 * accordingly the signatureCache map.
-	 *
-	 * @param signature
-	 *            The signature to match.
-	 */
 	private boolean matchesPattern(final String signature) {
 		synchronized (this) {
 			final ListIterator<PatternEntry> patternListIterator = this.patternList
